@@ -10,6 +10,8 @@ from dial_mpc.envs.unitree_go2_env import (
     UnitreeGo2CrateEnvConfig,
 )
 
+from dial_mpc.envs.uav.uav_env import UAVStationaryTrackingConfig, UAVStationaryTrackingEnv
+
 _configs = {
     "unitree_h1_walk": UnitreeH1WalkEnvConfig,
     "unitree_h1_push_crate": UnitreeH1PushCrateEnvConfig,
@@ -17,8 +19,12 @@ _configs = {
     "unitree_go2_walk": UnitreeGo2EnvConfig,
     "unitree_go2_seq_jump": UnitreeGo2SeqJumpEnvConfig,
     "unitree_go2_crate_climb": UnitreeGo2CrateEnvConfig,
+    "uav_stationary_tracking": UAVStationaryTrackingConfig,
 }
 
+_custom_envs = {
+    "uav_stationary_tracking": UAVStationaryTrackingEnv
+}
 
 def register_config(name: str, config: Any):
     _configs[name] = config
@@ -26,3 +32,9 @@ def register_config(name: str, config: Any):
 
 def get_config(name: str) -> Any:
     return _configs[name]
+
+def register_custom_env(name: str, env: Any):
+    _custom_envs[name] = env
+
+def get_custom_env(name: str) -> Any:
+    return _custom_envs[name]

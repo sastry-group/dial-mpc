@@ -116,9 +116,6 @@ class MBDPI:
         # esitimate mu_0tm1
         rewss, pipeline_statess = self.rollout_us_vmap(state, us)
         rew_Ybar_i = rewss[-1].mean()
-        qss = pipeline_statess.q
-        qdss = pipeline_statess.qd
-        xss = pipeline_statess.x.pos
         rews = rewss.mean(axis=-1)
         logp0 = (rews - rew_Ybar_i) / rews.std(axis=-1) / self.args.temp_sample
 
@@ -127,9 +124,18 @@ class MBDPI:
 
         # NOTE: update only with reward
         Ybar = jnp.einsum("n,nij->ij", weights, Y0s)
-        qbar = jnp.einsum("n,nij->ij", weights, qss)
-        qdbar = jnp.einsum("n,nij->ij", weights, qdss)
-        xbar = jnp.einsum("n,nijk->ijk", weights, xss)
+
+        if self.env.backend == "mjx":
+            qss = pipeline_statess.q
+            qdss = pipeline_statess.qd
+            xss = pipeline_statess.x.pos
+            qbar = jnp.einsum("n,nij->ij", weights, qss)
+            qdbar = jnp.einsum("n,nij->ij", weights, qdss)
+            xbar = jnp.einsum("n,nijk->ijk", weights, xss)
+        else:
+            qbar = {}
+            qdbar = {}
+            xbar = {}
 
         info = {
             "rews": rews,
@@ -215,7 +221,10 @@ def main():
     )
 
     print(emoji.emojize(":rocket:") + "Creating environment")
-    env = brax_envs.get_environment(dial_config.env_name, config=env_config)
+    if env_config.backend == "mjx":
+        env = brax_envs.get_environment(dial_config.env_name, config=env_config)
+    else:
+        env = dial_envs.get_custom_env(dial_config.env_name)(env_config)
     reset_env = jax.jit(env.reset)
     step_env = jax.jit(env.step)
     mbdpi = MBDPI(dial_config, env)
@@ -274,57 +283,68 @@ def main():
     # create result dir if not exist
     if not os.path.exists(dial_config.output_dir):
         os.makedirs(dial_config.output_dir)
-
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-    # plot rews_plan
-    # plt.plot(rews_plan)
-    # plt.savefig(os.path.join(dial_config.output_dir,
-    #             f"{timestamp}_rews_plan.pdf"))
+    # visualize brax env
+    if env.backend == "mjx":
+        # plot rews_plan
+        # plt.plot(rews_plan)
+        # plt.savefig(os.path.join(dial_config.output_dir,
+        #             f"{timestamp}_rews_plan.pdf"))
 
-    # host webpage with flask
-    print("Processing rollout for visualization")
-    import flask
+        # host webpage with flask
+        print("Processing rollout for visualization")
+        import flask
 
-    app = flask.Flask(__name__)
-    webpage = html.render(
-        env.sys.tree_replace({"opt.timestep": env.dt}), rollout, 1080, True
-    )
-
-    # save the html file
-    with open(
-        os.path.join(dial_config.output_dir, f"{timestamp}_brax_visualization.html"),
-        "w",
-    ) as f:
-        f.write(webpage)
-
-    # save the rollout
-    data = []
-    xdata = []
-    for i in range(len(rollout)):
-        pipeline_state = rollout[i]
-        data.append(
-            jnp.concatenate(
-                [
-                    jnp.array([i]),
-                    pipeline_state.qpos,
-                    pipeline_state.qvel,
-                    pipeline_state.ctrl,
-                ]
-            )
+        app = flask.Flask(__name__)
+        webpage = html.render(
+            env.sys.tree_replace({"opt.timestep": env.dt}), rollout, 1080, True
         )
-        xdata.append(infos[i]["xbar"][-1])
-    data = jnp.array(data)
-    xdata = jnp.array(xdata)
-    jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_states"), data)
-    jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_predictions"), xdata)
 
-    @app.route("/")
-    def index():
-        return webpage
+        # save the html file
+        with open(
+            os.path.join(dial_config.output_dir, f"{timestamp}_brax_visualization.html"),
+            "w",
+        ) as f:
+            f.write(webpage)
 
-    app.run(port=5000)
+        # save the rollout
+        data = []
+        xdata = []
+        for i in range(len(rollout)):
+            pipeline_state = rollout[i]
+            data.append(
+                jnp.concatenate(
+                    [
+                        jnp.array([i]),
+                        pipeline_state.qpos,
+                        pipeline_state.qvel,
+                        pipeline_state.ctrl,
+                    ]
+                )
+            )
+            xdata.append(infos[i]["xbar"][-1])
+        data = jnp.array(data)
+        xdata = jnp.array(xdata)
+        jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_states"), data)
+        jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_predictions"), xdata)
 
+        @app.route("/")
+        def index():
+            return webpage
+
+        app.run(port=5000)
+
+    elif env.backend == "custom":
+        from dial_mpc.envs.uav.visualizer import DroneVisualizer, VisualizerConfig
+        visualize_states = []
+        for i in range(len(rollout)):
+            visualize_states.append(rollout[i].q)
+        visualize_states = jnp.array(visualize_states)
+        visualizer_config = VisualizerConfig(interval = 1000 * env_config.dt, trail_length = int(1 / env_config.dt))
+        visualizer = DroneVisualizer(visualize_states, visualizer_config)
+        # visualizer.animate_and_save(os.path.join(dial_config.output_dir, f"{timestamp}_uav_visualization.mp4"), fps=50)
+        visualizer.animate()
 
 if __name__ == "__main__":
     main()
