@@ -6,6 +6,7 @@ class DialConfig:
     # exp
     seed: int = 0
     output_dir: str = "output"
+    save_raw_predictions: bool = False
     n_steps: int = 100
     # env
     env_name: str = "unitree_h1_walk"

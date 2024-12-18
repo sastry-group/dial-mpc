@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from functools import partial
 from jax.scipy.spatial.transform import Rotation as R
 
-from uav_plan.dynamics.se3_dynamics_jax import SE3State
+from dial_mpc.envs.uav.se3_dynamics_jax import SE3State
 
 @dataclass
 class StationaryTrackingRewardConfig():
@@ -34,17 +34,17 @@ class StationaryTrackingReward():
 
     @partial(jax.jit, static_argnums=0)
     def __call__(self, state: jnp.ndarray, action: jnp.ndarray) -> jnp.ndarray:
-        assert (len(state.shape) == 2 and state.shape[-1] == 18) or (len(state.shape) == 1 and state.shape[-1] == 18), "State must be a 2D array with shape (N, 18) or a 1D array with shape (18,)"
+        assert (len(state.shape) == 2 and state.shape[-1] >= 18) or (len(state.shape) == 1 and state.shape[-1] >= 18), "State must be a 2D array with shape (N, >=18) or a 1D array with shape (>=18,)"
         p = state[..., :3]
         rot = state[..., 3:12].reshape(state.shape[:-1] + (3, 3))
         v = state[..., 12:15]
-        omega = state[..., 15:]
+        omega = state[..., 15:18]
 
-        position_reward = -1.0 * self.weight_position * jnp.linalg.norm(p - self.target_position, axis=-1)
+        position_reward = -1.0 * jnp.sum(self.weight_position * (p - self.target_position) ** 2, axis=-1)
         orientation_reward = -1.0 * self.weight_orientation * 0.5 * jnp.trace(jnp.eye(3) - rot.swapaxes(-1, -2) @ self.target_orientation, axis1=-2, axis2=-1)
-        velocity_reward = -1.0 * self.weight_velocity * jnp.linalg.norm(v, axis=-1)
-        angular_velocity_reward = -1.0 * self.weight_angular_velocity * jnp.linalg.norm(omega, axis=-1)
-        action_reward = -1.0 * self.weight_action * jnp.linalg.norm(action, axis=-1)
+        velocity_reward = -1.0 * jnp.sum(self.weight_velocity * (v ** 2), axis=-1)
+        angular_velocity_reward = -1.0 * jnp.sum(self.weight_angular_velocity * (omega ** 2), axis=-1)
+        action_reward = -1.0 * jnp.sum(self.weight_action * (action ** 2), axis=-1)
         return position_reward + orientation_reward + velocity_reward + angular_velocity_reward + action_reward
 
 def test_stationary_tracking_reward():

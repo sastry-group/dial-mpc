@@ -6,6 +6,8 @@ examples = [
     "unitree_go2_seq_jump",
     "unitree_go2_crate_climb",
     "uav_stationary_tracking",
+    "trt_stationary_tracking",
+    "trt_obstacle_avoidance",
 ]
 
 deploy_examples = [

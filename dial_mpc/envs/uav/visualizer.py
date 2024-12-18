@@ -61,7 +61,7 @@ class DroneVisualizer:
         """
         Initializes the DroneVisualizer with trajectory data and configuration.
         """
-        if trajectory.ndim != 2 or trajectory.shape[1] != 12:
+        if trajectory.ndim != 2 or trajectory.shape[1] <= 12:
             raise ValueError("Trajectory must be of shape (N, 12).")
 
         self.trajectory = trajectory
@@ -135,6 +135,9 @@ class DroneVisualizer:
         self.ax.set_xlim(self.config.xlim)
         self.ax.set_ylim(self.config.ylim)
         self.ax.set_zlim(self.config.zlim)
+        
+        # Set aspect ratio to be equal
+        self.ax.set_aspect('equal')
 
         # Label axes
         self.ax.set_xlabel(self.config.xlabel, fontsize=self.config.font_size, color=self.config.axis_label_color)

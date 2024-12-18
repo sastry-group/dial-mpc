@@ -133,16 +133,22 @@ class MBDPI:
             qdbar = jnp.einsum("n,nij->ij", weights, qdss)
             xbar = jnp.einsum("n,nijk->ijk", weights, xss)
         else:
-            qbar = {}
-            qdbar = {}
-            xbar = {}
+            qss = pipeline_statess.q
+            qdss = pipeline_statess.qd
+            xss = pipeline_statess.q[:, :, None, :3]
+            qbar = jnp.einsum("n,nij->ij", weights, qss)
+            qdbar = jnp.einsum("n,nij->ij", weights, qdss)
+            xbar = jnp.einsum("n,nijk->ijk", weights, xss)
 
+        if not self.args.save_raw_predictions:
+            xss = {}
         info = {
             "rews": rews,
             "qbar": qbar,
             "qdbar": qdbar,
             "xbar": xbar,
             "new_noise_scale": new_noise_scale,
+            "xss": xss,
         }
 
         return rng, Ybar, info
@@ -285,6 +291,34 @@ def main():
         os.makedirs(dial_config.output_dir)
     timestamp = time.strftime("%Y%m%d-%H%M%S")
 
+    # save the rollout
+    data = []
+    xdata = []
+    xssdata = []
+    for i in range(len(rollout)):
+        pipeline_state = rollout[i]
+        data_row = jnp.concatenate(
+            [
+                jnp.array([i]),
+                pipeline_state.q,
+                pipeline_state.qd,
+                # pipeline_state.ctrl,
+            ]
+        )
+        if hasattr(pipeline_state, "ctrl"):
+            data_row = jnp.concatenate([data_row, pipeline_state.ctrl])
+        data.append(data_row)
+        xdata.append(infos[i]["xbar"][-1])
+        if dial_config.save_raw_predictions:
+            xssdata.append(infos[i]["xss"][-1])
+    data = jnp.array(data)
+    xdata = jnp.array(xdata)
+    if dial_config.save_raw_predictions:
+        xssdata = jnp.array(xssdata)
+        jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_predictions_ss"), xssdata)
+    jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_states"), data)
+    jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_predictions"), xdata)
+
     # visualize brax env
     if env.backend == "mjx":
         # plot rews_plan
@@ -307,27 +341,6 @@ def main():
             "w",
         ) as f:
             f.write(webpage)
-
-        # save the rollout
-        data = []
-        xdata = []
-        for i in range(len(rollout)):
-            pipeline_state = rollout[i]
-            data.append(
-                jnp.concatenate(
-                    [
-                        jnp.array([i]),
-                        pipeline_state.qpos,
-                        pipeline_state.qvel,
-                        pipeline_state.ctrl,
-                    ]
-                )
-            )
-            xdata.append(infos[i]["xbar"][-1])
-        data = jnp.array(data)
-        xdata = jnp.array(xdata)
-        jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_states"), data)
-        jnp.save(os.path.join(dial_config.output_dir, f"{timestamp}_predictions"), xdata)
 
         @app.route("/")
         def index():
