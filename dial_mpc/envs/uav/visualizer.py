@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.linalg as spl
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import matplotlib.animation as animation
@@ -76,10 +77,21 @@ class DroneVisualizer:
             resolution=config.resolution
         )
 
+        self.rotor_cylinders = []
+        for _ in range(4):
+            self.rotor_cylinders.append(
+                self.create_cylinder(
+                    radius=config.cylinder_radius/2,
+                    height=config.cylinder_height/2,
+                    resolution=config.resolution
+                )
+            )
+
         # Initialize plot elements
         self.fig = None
         self.ax = None
         self.poly_collection = None
+        self.rotor_collections = None
         self.trail, = (None,)
 
     def create_cylinder(self, radius: float, height: float, resolution: int) -> list:
@@ -123,6 +135,59 @@ class DroneVisualizer:
                 transformed_face.append(v_trans)
             transformed.append(transformed_face)
         return transformed
+    
+    def get_rotor_poses(self, rotor_vertices: list, R_body: np.ndarray, t_body: np.ndarray, alphas: list) -> list:
+        
+        def skew_3d(omega):
+            return np.array([[0, -omega[2], omega[1]],
+                [omega[2], 0, -omega[0]],
+                [-omega[1], omega[0], 0]])
+        
+        def axis_angle_to_SO3(omega, theta):
+            hat_u = skew_3d(omega)
+            theta = theta*np.linalg.norm(omega)
+            hat_u = hat_u / np.linalg.norm(omega)
+            return np.eye(3) + hat_u * np.sin(theta) + np.dot(hat_u, hat_u) * (1 - np.cos(theta))
+        
+        def pR_to_g(p, R):
+            g = np.eye(4)
+            g[:3, :3] = R
+            g[:3, 3] = p
+            return g
+        
+        def g_to_pR(g):
+            p = g[:3,3]
+            R = g[:3,:3]
+            return p, R
+        
+        def hat_3d(xi):
+            v = xi[:3]
+            w = xi[3:]
+            xi_hat = np.zeros((4, 4))
+            xi_hat[:3, :3] = skew_3d(w)
+            xi_hat[:3, 3] = v
+            return xi_hat
+        
+        def se3_to_SE3(xi):
+            return spl.expm(hat_3d(xi))
+
+        Ls = [0.3, 0.3, 0.3, 0.3]
+        g_indexes = []
+        for i in range(4):
+            R = axis_angle_to_SO3(np.array([0,0,1]), i*np.pi/2)
+            p = R @ np.array([Ls[i], 0, 0])
+            g_indexes.append(pR_to_g(p, R))
+
+        g_body = pR_to_g(t_body, R_body)
+        xi_x = np.array([0,0,0,1,0,0])
+
+        modified_rotors = []
+        for rotor, gi, alpha in zip(rotor_vertices, g_indexes, alphas):
+            g = g_body @ gi @ se3_to_SE3(xi_x * alpha)
+            p, R = g_to_pR(g)
+            modified_rotors.append(self.transform_vertices(rotor, R, p))
+
+        return modified_rotors
 
     def initialize_plot(self):
         """
@@ -167,15 +232,33 @@ class DroneVisualizer:
         # Initialize the drone (cylinder) at the first position
         initial_pos = self.trajectory[0, 0:3]
         initial_R = self.trajectory[0, 3:12].reshape((3, 3))
+        initial_alpha = self.trajectory[0, 12:16]
         transformed_cylinder = self.transform_vertices(self.cylinder, initial_R, initial_pos)
+        transformed_rotors = self.get_rotor_poses(self.rotor_cylinders, initial_R, initial_pos, initial_alpha)
+
         self.poly_collection = Poly3DCollection(
-            transformed_cylinder,
-            facecolors=self.config.drone_color,
-            edgecolors=self.config.edge_color,
-            linewidths=0.5,
-            alpha=0.9
-        )
+                transformed_cylinder,
+                facecolors=self.config.drone_color,
+                edgecolors=self.config.edge_color,
+                linewidths=0.5,
+                alpha=0.9
+            )
         self.ax.add_collection3d(self.poly_collection)
+
+        self.rotor_collections = []
+        for rotor in transformed_rotors:
+            self.rotor_collections.append(
+                Poly3DCollection(
+                    rotor,
+                    facecolors=self.config.drone_color,
+                    edgecolors=self.config.edge_color,
+                    linewidths=0.5,
+                    alpha=0.9
+                )
+            )
+
+        for collection in self.rotor_collections:
+            self.ax.add_collection3d(collection)
 
         # Initialize the trailing trajectory
         self.trail, = self.ax.plot(
@@ -199,10 +282,15 @@ class DroneVisualizer:
         # Extract current position and rotation
         pos = self.trajectory[frame, 0:3]
         R = self.trajectory[frame, 3:12].reshape((3, 3))
+        alpha = self.trajectory[frame, 12:16]
 
         # Transform the cylinder
         transformed = self.transform_vertices(self.cylinder, R, pos)
         self.poly_collection.set_verts(transformed)
+
+        transformed_rotors = self.get_rotor_poses(self.rotor_cylinders, R, pos, alpha)
+        for trotor, col in zip(transformed_rotors, self.rotor_collections):
+            col.set_verts(trotor)
 
         # Update the trailing path
         trail_length = self.config.trail_length
@@ -214,7 +302,7 @@ class DroneVisualizer:
         self.trail.set_data(self.trajectory[indices, 0], self.trajectory[indices, 1])
         self.trail.set_3d_properties(self.trajectory[indices, 2])
 
-        return self.poly_collection, self.trail
+        return self.poly_collection, *self.rotor_collections, self.trail
 
     def animate(self):
         """
